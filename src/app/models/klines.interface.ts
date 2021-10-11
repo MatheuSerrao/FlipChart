@@ -28,3 +28,10 @@ export function parseKline(kline: Klines) {
     ],
   };
 }
+
+export function parseKlineMaxMin(kline: Klines) {
+  return {
+    x: new Date(kline.openTime),
+    y: parseFloat(kline.closePrice),
+  };
+}
