@@ -1,28 +1,23 @@
 import { HttpClient } from '@angular/common/http';
 import { AfterViewInit, Component } from '@angular/core';
 import ApexCharts from 'apexcharts';
+import { OptionChart } from 'src/app/classes/options-chart.class';
 import { environment } from 'src/environments/environment';
 import {
   Klines,
+  parseGaussianSmoothHg,
+  parseGaussianSmoothLw,
   parseKline,
-  parseKlineMaxMin,
 } from './models/klines.interface';
-
-interface ApexChartOptions {
-  series: {
-    name: string;
-    type: string;
-    data: {
-      x: Date;
-      y: number[] | number;
-    }[];
-  }[];
-  chart?: any;
-  title?: any;
-  xaxis?: any;
-  yaxis?: any;
-  stroke?: any;
-  tooltip?: any;
+interface MaxMin {
+  max: {
+    length: number;
+    data: Klines[];
+  };
+  min: {
+    length: number;
+    data: Klines[];
+  };
 }
 
 @Component({
@@ -33,47 +28,14 @@ interface ApexChartOptions {
 export class AppComponent implements AfterViewInit {
   constructor(private http: HttpClient) {}
 
-  private options: ApexChartOptions = {
-    series: [
-      {
-        name: 'line',
-        type: 'line',
-        data: [],
-      },
-    ],
-    chart: {
-      height: 350,
-      type: 'line',
-    },
-    title: {
-      text: 'CandleStick Chart',
-      align: 'left',
-    },
-    stroke: {
-      width: [3, 1],
-    },
-    // tooltip: {
-    //   shared: true,
-    //   custom: [
-    //     (seriesIndex: number, dataPointIndex: number, w: any) =>
-    //       w.globals.series[seriesIndex][dataPointIndex],
-    //     (seriesIndex: number, dataPointIndex: number, w: any) => {
-    //       var o = w.globals.seriesCandleO[seriesIndex][dataPointIndex];
-    //       var h = w.globals.seriesCandleH[seriesIndex][dataPointIndex];
-    //       var l = w.globals.seriesCandleL[seriesIndex][dataPointIndex];
-    //       var c = w.globals.seriesCandleC[seriesIndex][dataPointIndex];
-    //       return '';
-    //     },
-    //   ],
-    // },
-    xaxis: {
-      type: 'datetime',
-    },
-  };
-
   ngAfterViewInit() {
     this.getKlines();
+    this.getMemoryVolatilityBands();
   }
+
+  private symbol = 'BTCUSDT';
+  private timeFrame = '1d';
+  private att = 'highestPrice';
 
   getKlines() {
     const data: {
@@ -81,44 +43,42 @@ export class AppComponent implements AfterViewInit {
       y: number[];
     }[] = [];
 
-    return this.http.get<Klines[]>(environment.url + '/klines').subscribe(
-      (res: Klines[]) => {
-        res.forEach((element: Klines) => {
-          data.push(parseKline(element));
-        });
-        const body = {
-          name: 'candle',
-          type: 'candlestick',
-          data: data,
-        };
-        this.options.series.push(body);
-        this.getMaxMin();
-      },
-      () => {},
-      () => {
-        const chart = new ApexCharts(
-          document.querySelector('#chart'),
-          this.options
-        );
-        chart.render();
-      }
-    );
+    let options!: OptionChart;
+
+    return this.http
+      .get<Klines[]>(
+        environment.url +
+          `/klines?symbol=${this.symbol}&timeFrame=${this.timeFrame}`
+      )
+      .subscribe(
+        (res: Klines[]) => {
+          res.forEach((element: Klines) => {
+            data.push(parseKline(element));
+          });
+          const body = [
+            {
+              data: data,
+            },
+          ];
+          options = new OptionChart(body, 'candlestick', 'Candlestick');
+        },
+        () => {},
+        () => {
+          const chart = new ApexCharts(
+            document.querySelector('#candlestick'),
+            options.value()
+          );
+          chart.render();
+        }
+      );
   }
 
   getMaxMin() {
-    interface MaxMin {
-      max: {
-        length: number;
-        data: Klines[];
-      };
-      min: {
-        length: number;
-        data: Klines[];
-      };
-    }
-
     return this.http
-      .get<MaxMin>(environment.url + '/volatility/min-max-locals')
+      .get<MaxMin>(
+        environment.url +
+          `/volatility/min-max-locals?symbol=${this.symbol}&timeFrame=${this.timeFrame}`
+      )
       .subscribe(
         (res: MaxMin) => {
           const data: {
@@ -126,15 +86,73 @@ export class AppComponent implements AfterViewInit {
             y: number;
           }[] = [];
 
-          let klines: Klines[] = res.max.data.concat(res.min.data);
-          klines = this.sortByStartDate(klines);
-          klines.forEach((element: Klines) => {
-            data.push(parseKlineMaxMin(element));
-          });
-          this.options.series[0].data = data;
+          // let klines: Klines[] = res.max.data.concat(res.min.data);
+          // klines = this.sortByStartDate(klines);
+          // klines.forEach((element: Klines) => {
+          //   data.push(parseKlineMaxMin(element));
+          // });
+          // this.options.series[0].data = data;
         },
         () => {},
         () => {}
+      );
+  }
+
+  getMemoryVolatilityBands() {
+    interface MaxMin {
+      max: Klines[];
+      min: Klines[];
+    }
+
+    let options!: OptionChart;
+
+    return this.http
+      .get<MaxMin>(
+        environment.url +
+          `/volatility/memory-volatility-bands?symbol=${this.symbol}&timeFrame=${this.timeFrame}&att=${this.att}`
+      )
+      .subscribe(
+        (res: MaxMin) => {
+          const dataMax: {
+            x: Date;
+            y?: number;
+          }[] = [];
+
+          const dataMin: {
+            x: Date;
+            y?: number;
+          }[] = [];
+          let max: Klines[] = res.max;
+          let min: Klines[] = res.min;
+          max.forEach((element: Klines) => {
+            dataMax.push(parseGaussianSmoothHg(element));
+          });
+          min.forEach((element: Klines) => {
+            dataMin.push(parseGaussianSmoothLw(element));
+          });
+
+          const body = [
+            {
+              name: 'Max',
+              type: 'line',
+              data: dataMax,
+            },
+            {
+              name: 'Min',
+              type: 'line',
+              data: dataMin,
+            },
+          ];
+          options = new OptionChart(body, 'line', 'Gaussian Smooth');
+        },
+        () => {},
+        () => {
+          const chart = new ApexCharts(
+            document.querySelector('#line'),
+            options.value()
+          );
+          chart.render();
+        }
       );
   }
 
